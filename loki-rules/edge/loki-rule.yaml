@@ -1,0 +1,21 @@
+groups:
+  - name: example
+    rules:
+    - alert: HighThroughputLogStreams
+      expr: |
+            sum by (job, compose_service)(count_over_time({telegraf_ind="E!"} [1h])) 
+            / 
+            sum by (job, compose_service)(count_over_time({container_name="telegraf"} [1h])) > 0.05
+      for: 20s
+      labels:
+        severity: WARN
+        team: egineer
+        category: logs
+      annotations:
+        title: "Low Rate metrics"
+        description: "High evaluate of error"
+        impact: "impact"
+        action: "action"
+        dashboard: "https://grafana.com/service-dashboard"
+        runbook: "https://wiki.com"
+        logurl: "https://grafana.com/log-explorer"

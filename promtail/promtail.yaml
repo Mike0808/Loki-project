@@ -1,0 +1,138 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+- job_name: telegraf
+  static_configs:
+    - targets:
+        - localhost
+      labels:
+        job: telegraf
+        __path__: /var/lib/docker/containers/*/*/*log
+  pipeline_stages:
+    - json:
+        expressions:
+          stream: stream
+          attrs: attrs
+          tag: attrs.tag
+          time: time
+    - regex:
+        expression: ^(?P<image_name>([^|]+))\|(?P<container_name>([^|]+))$
+        source: "tag"
+    - labels:
+        image_name:
+        container_name:
+    - match:
+        # drop all logs for all containers that don't have --log-opt: tag: "{{:ImageName}}|{{:Name}}"
+        selector: '{job="telegraf",container_name="",image_name=""}'
+        action: drop
+    - match:
+       selector: '{container_name="telegraf"}'
+       stages:
+         - json:
+             expressions:
+               row: log
+         - regex:
+             expression: ^.+Z\s(?P<telegraf_ind>\S+) (?P<telegraf_msg_type>\S+) (?P<telegraf_msg_log>.+)
+             source: row
+         - regex:
+             source: telegraf_msg_log
+             expression: ^.+(?P<telegraf_plugin_name_er>\[\S+\])(?P<telegraf_error_msg>.+status code) (?P<telegraf_status_code>\d+) \((?P<telegraf_status_code_decode>\w.+)\),
+         - regex:
+             source: telegraf_msg_log
+             expression: ^.*(?P<telegraf_plugin_name_id>\[\S+\]) (?P<telegraf_msg_info_debug>.+)
+         - regex:
+             source: telegraf_msg_info_debug
+             expression: ^(?P<telegraf_status>.+\[)(?P<telegraf_url>.+\])
+         - regex:
+             source: telegraf_msg_info_debug
+             expression: ^.+(?P<telegraf_numbers>[\d])
+         - template:
+             source: telegraf_msg_agr
+             template: "{{if .telegraf_status}}telegraf_status{{else if .telegraf_url}}telegraf_url{{else if .telegraf_numbers}}telegraf_numbers{{else}}telegraf_other{{end}}"
+         - labels:
+             telegraf_ind:
+             telegraf_plugin_name_er:
+             telegraf_plugin_name_id:
+             telegraf_status_code:
+             telegraf_msg_agr:
+         - output:
+             source: telegraf_msg_log
+    - match:
+       selector: '{container_name="piget"}'
+       stages:
+         - json:
+             expressions:
+               row: log
+         - regex:
+             expression: (?P<piget_datetime>(^.+?[\d-:\s/]+))(?P<piget_main_msg_type>\S+)\s(?P<piget_msg_log>.+)
+             source: row
+         - regex:
+             source: piget_msg_log
+             expression: (?P<piget_msg_type>(^\S+))\s(?P<piget_msg>.+)
+         - regex:
+             source: piget_msg
+             expression: (?P<piget_response>(^.+?\d\s))(?P<piget_msg_error>(\S.+?\))).+,\s(?P<piget_url>(.+))
+         - regex:
+             source: piget_msg
+             expression: ^(?P<piget_metrics>^\d+)
+         - template:
+             source: piget_msg_agr
+             template: "{{if .piget_response }}piget_response{{else if .piget_msg_error}}piget_msg_error{{else if .piget_url}}piget_url{{else if .piget_metrics}}piget_metrics{{else}}piget_msg{{end}}"
+         - labels:
+             piget_main_msg_type:
+             piget_msg_type:
+             piget_msg_agr:
+         - output:
+             source: piget_msg_log
+    - match:
+       selector: '{container_name="edgepoint"}'
+       stages:
+         - json:
+             expressions:
+               row: log
+         - regex:
+             expression: (?P<edgepoint_datetime>(^.+?[\d-:\s/]+))(?P<edgepoint_main_msg_type>\S+)\s(?P<edgepoint_msg_log>.+)
+             source: row
+         - labels:
+             edgepoint_main_msg_type:
+             edgepoint_msg_log:
+         - output:
+             source: edgepoint_msg_log
+    - match:
+       selector: '{container_name="nifi"}'
+       stages:
+         - json:
+             expressions:
+               row: log
+         - regex:
+             expression: (?P<nifi_datetime>(^.+?[\d:/\-\s,]+))(?P<nifi_msg_type>\S+)\s+(?P<nifi_action>\S+)\s+(?P<nifi_process>\S+)\s+(?P<nifi_msg>.+)
+             source: row
+         - template:
+             source: nifi_msg_agr
+             template: "{{if .nifi_msg_type }} nifi_msg_type {{else if .nifi_action }} nifi_action {{else if .nifi_process }} nifi_process {{else}} nifi_msg {{end}}"
+         - labels:
+             nifi_msg_agr:
+         - output:
+             source: nifi_msg_log
+    - match:
+       selector: '{container_name="forward"}'
+       stages:
+         - json:
+             expressions:
+               row: log
+         - regex:
+             expression: (?P<forward_datetime>(^.+?[\d-:\s/]+))(?P<forward_main_msg_type>\S+)\s(?P<forward_msg_log>.+)
+             source: row
+         - labels:
+             forward_main_msg_type:
+             forward_msg_log:
+         - output:
+             source: forward_msg_log
